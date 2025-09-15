@@ -135,6 +135,8 @@ cam_path = NodePath("../../../game/Quadcopter/CollisionShape/Camera")
 [node name="Quadcopter" type="CharacterBody3D" parent="game"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.926005, -2.0828, 4.26574, 4.62471)
 script = ExtResource("5")
+drag = 3.0
+max_velocity = 250.0
 
 [node name="CollisionShape" type="CollisionShape3D" parent="game/Quadcopter"]
 transform = Transform3D(1, 0, 0, 0, 0.531446, 0, 0, 0, 0.531446, -0.698975, 0.0189714, -0.14437)

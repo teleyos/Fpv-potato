@@ -2,9 +2,10 @@ extends CharacterBody3D
 
 # Exposed defaults (used to generate a config if missing)
 @export var thrust: float = 270.0
-@export var rotation_speed: float = 4.0  # Renamed and repurposed
+@export var rotation_speed: float = 4.0
 @export var gravity_value: float = -80.0
 @export var drag: float = 0.08
+@export var max_velocity: float = 50.0  # New max velocity parameter
 @export var spawn_transform: Transform3D = Transform3D.IDENTITY
 
 # Where we store/read the config
@@ -31,6 +32,10 @@ func _physics_process(delta: float) -> void:
 		+ gravity
 		- velocity * drag
 	)
+	
+	# Apply max velocity limit
+	if velocity.length() > max_velocity:
+		velocity = velocity.normalized() * max_velocity
 
 	# Direct rotation without acceleration/damping
 	var rot_amount: float = rotation_speed * delta
@@ -57,18 +62,20 @@ func _load_or_create_config(default_spawn: Transform3D) -> void:
 	if err == OK:
 		# Read values (typed casts protect against malformed configs)
 		thrust = float(cfg.get_value("drone", "thrust", thrust))
-		rotation_speed = float(cfg.get_value("drone", "rotation_speed", rotation_speed))  # Updated key
+		rotation_speed = float(cfg.get_value("drone", "rotation_speed", rotation_speed))
 		gravity_value = float(cfg.get_value("drone", "gravity_value", gravity_value))
 		drag = float(cfg.get_value("drone", "drag", drag))
+		max_velocity = float(cfg.get_value("drone", "max_velocity", max_velocity))  # New config entry
 
 		var st: Variant = cfg.get_value("drone", "spawn_transform", default_spawn)
 		spawn_transform = st if st is Transform3D else default_spawn
 	else:
 		# Create config with current exports and the placed transform as spawn
 		cfg.set_value("drone", "thrust", thrust)
-		cfg.set_value("drone", "rotation_speed", rotation_speed)  # Updated key
+		cfg.set_value("drone", "rotation_speed", rotation_speed)
 		cfg.set_value("drone", "gravity_value", gravity_value)
 		cfg.set_value("drone", "drag", drag)
+		cfg.set_value("drone", "max_velocity", max_velocity)  # New config entry
 		cfg.set_value("drone", "spawn_transform", default_spawn)
 
 		var save_err: Error = cfg.save(CONFIG_PATH)
@@ -81,9 +88,10 @@ func _load_or_create_config(default_spawn: Transform3D) -> void:
 func save_config() -> void:
 	var cfg: ConfigFile = ConfigFile.new()
 	cfg.set_value("drone", "thrust", thrust)
-	cfg.set_value("drone", "rotation_speed", rotation_speed)  # Updated key
+	cfg.set_value("drone", "rotation_speed", rotation_speed)
 	cfg.set_value("drone", "gravity_value", gravity_value)
 	cfg.set_value("drone", "drag", drag)
+	cfg.set_value("drone", "max_velocity", max_velocity)  # New config entry
 	cfg.set_value("drone", "spawn_transform", spawn_transform)
 
 	var err: Error = cfg.save(CONFIG_PATH)
