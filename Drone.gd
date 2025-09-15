@@ -1,52 +1,91 @@
-extends KinematicBody
+extends CharacterBody3D
 
-var thrust = 270
-var angular_thrust = 30
-var gravity_value = -80
-var drag = 0.08
-export var spawn = Vector3.ZERO
+# Exposed defaults (used to generate a config if missing)
+@export var thrust: float = 270.0
+@export var rotation_speed: float = 4.0  # Renamed and repurposed
+@export var gravity_value: float = -80.0
+@export var drag: float = 0.08
+@export var spawn_transform: Transform3D = Transform3D.IDENTITY
 
-var gravity = Vector3(0,gravity_value,0)
-var velocity = Vector3.ZERO
-var angular_velocity = Vector3.ZERO
-var input_left = Vector2.ZERO
-var input_right = Vector2.ZERO
+# Where we store/read the config
+const CONFIG_PATH: String = "user://drone.cfg"
 
-func _ready():
-	spawn = transform
-	pass 
+var input_left: Vector2 = Vector2.ZERO
+var input_right: Vector2 = Vector2.ZERO
 
-func _physics_process(delta):
-	input_left = Input.get_vector("ldown","lup","lright","lleft")
-	input_right = Input.get_vector("rdown","rup","rright","rleft")
-	
+func _ready() -> void:
+	# Use the scene-placed transform as the default spawn point for first run.
+	var default_spawn: Transform3D = transform
+	_load_or_create_config(default_spawn)
+
+func _physics_process(delta: float) -> void:
+	# Sticks / inputs (order: neg_x, pos_x, neg_y, pos_y)
+	input_left  = Input.get_vector("ldown", "lup", "lright", "lleft")
+	input_right = Input.get_vector("rdown", "rup", "rright", "rleft")
+
+	# Recompute gravity each tick so edits from DebugUI take effect.
+	var gravity: Vector3 = Vector3(0.0, gravity_value, 0.0)
+
 	velocity += delta * (
-		thrust*global_transform.basis.y*max(0,input_left.x) + 
-		gravity - 
-		velocity*drag
+		thrust * global_transform.basis.y * maxf(0.0, input_left.x)
+		+ gravity
+		- velocity * drag
 	)
-	
-	var angular_acceleration = Vector3.ZERO
-	
-	angular_acceleration.x = input_right.x * angular_thrust  # Pitch (up/down)
-	angular_acceleration.y = input_left.y * angular_thrust # Yaw (left/right)
-	angular_acceleration.z = input_right.y * angular_thrust  # Roll (tilt)
-	
-	angular_velocity += angular_acceleration * delta
-	
-	rotate_object_local(Vector3.RIGHT, angular_velocity.x * delta)
-	rotate_object_local(Vector3.UP, angular_velocity.y * delta)
-	rotate_object_local(Vector3.FORWARD, -angular_velocity.z * delta)
-	
-	angular_velocity *= 0.95
-	
-	if move_and_collide(delta * velocity) :
+
+	# Direct rotation without acceleration/damping
+	var rot_amount: float = rotation_speed * delta
+	rotate_object_local(Vector3.RIGHT,    input_right.x * rot_amount)  # Pitch
+	rotate_object_local(Vector3.UP,       input_left.y  * rot_amount)  # Yaw
+	rotate_object_local(Vector3.FORWARD, -input_right.y * rot_amount)  # Roll
+
+	# Kinematic step with collision stop.
+	if move_and_collide(velocity * delta) != null:
 		velocity = Vector3.ZERO
-		
-	
+
+	# Reset to spawn.
 	if Input.is_action_pressed("reset"):
-		transform = spawn
+		transform = spawn_transform
 		rotation_degrees = Vector3.ZERO
 		velocity = Vector3.ZERO
-		angular_velocity = Vector3.ZERO
-	pass
+
+# --- Config I/O ---
+
+func _load_or_create_config(default_spawn: Transform3D) -> void:
+	var cfg: ConfigFile = ConfigFile.new()
+	var err: Error = cfg.load(CONFIG_PATH)
+
+	if err == OK:
+		# Read values (typed casts protect against malformed configs)
+		thrust = float(cfg.get_value("drone", "thrust", thrust))
+		rotation_speed = float(cfg.get_value("drone", "rotation_speed", rotation_speed))  # Updated key
+		gravity_value = float(cfg.get_value("drone", "gravity_value", gravity_value))
+		drag = float(cfg.get_value("drone", "drag", drag))
+
+		var st: Variant = cfg.get_value("drone", "spawn_transform", default_spawn)
+		spawn_transform = st if st is Transform3D else default_spawn
+	else:
+		# Create config with current exports and the placed transform as spawn
+		cfg.set_value("drone", "thrust", thrust)
+		cfg.set_value("drone", "rotation_speed", rotation_speed)  # Updated key
+		cfg.set_value("drone", "gravity_value", gravity_value)
+		cfg.set_value("drone", "drag", drag)
+		cfg.set_value("drone", "spawn_transform", default_spawn)
+
+		var save_err: Error = cfg.save(CONFIG_PATH)
+		if save_err != OK:
+			push_warning("Failed to save default drone config to %s (err %d)" % [CONFIG_PATH, save_err])
+
+		# Ensure runtime matches what we wrote
+		spawn_transform = default_spawn
+
+func save_config() -> void:
+	var cfg: ConfigFile = ConfigFile.new()
+	cfg.set_value("drone", "thrust", thrust)
+	cfg.set_value("drone", "rotation_speed", rotation_speed)  # Updated key
+	cfg.set_value("drone", "gravity_value", gravity_value)
+	cfg.set_value("drone", "drag", drag)
+	cfg.set_value("drone", "spawn_transform", spawn_transform)
+
+	var err: Error = cfg.save(CONFIG_PATH)
+	if err != OK:
+		push_warning("Failed to save drone config to %s (err %d)" % [CONFIG_PATH, err])

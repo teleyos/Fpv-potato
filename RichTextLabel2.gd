@@ -1,9 +1,7 @@
+# RichTextLabel2.gd (Godot 4.x)
 extends RichTextLabel
 
-func _ready():
-	pass 
+func _process(_delta: float) -> void:
+    var v := Input.get_vector("rleft", "rright", "rup", "rdown")
+    text = "%.2f, %.2f" % [v.x, v.y]
 
-func _process(_delta):
-	var velocity = Input.get_vector("rdown", "rup", "rleft", "rright")
-	text = "%.2f, %.2f" % [velocity.x, velocity.y]	
-	pass

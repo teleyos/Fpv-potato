@@ -1,9 +1,14 @@
 extends MeshInstance2D
 
-var l = 0
+var half_size: Vector2 = Vector2.ZERO
 
-func _process(_delta):
-	if(!get_parent()):return
-	l = get_parent().rect_size / 2
-	position = l * (Vector2(1,1) + Input.get_vector("rleft","rright","rup","rdown")) - Vector2(2.5,2.5)
-	pass
+func _process(_delta: float) -> void:
+    var container := get_parent() as Control
+    if container == null:
+        return
+
+    half_size = container.size * 0.5
+
+    var v := Input.get_vector("rleft", "rright", "rup", "rdown")
+    position = half_size * (Vector2.ONE + v) - Vector2(2.5, 2.5)
+

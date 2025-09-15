@@ -1,166 +1,184 @@
+# Imported.gd (Godot 4.x)
 extends Node
 
-# Use user directory for write access in compiled games
-var imports_path = "user://imports/"
+# Use user directory for write access in exported games.
+var imports_path: String = "user://imports"
 
-# Player/aircraft to move if it spawns inside the imported structure
-export(float) var teleport_clearance = 2.0  # meters above the top surface
-export(NodePath) var aircraft_path
-onready var aircraft = get_node(aircraft_path) if aircraft_path else null
+@export var teleport_clearance: float = 2.0  # meters above the top surface
+@export var aircraft_path: NodePath
+@onready var aircraft: Node3D = get_node_or_null(aircraft_path) as Node3D
 
-func _ready():
-	# Create imports directory
-	var dir = Directory.new()
-	if dir.make_dir_recursive(imports_path) != OK:
-		push_error("Could not create imports directory: " + imports_path)
+# Keep references to last import so we can delete them on next import
+var imported_visual_root: Node = null
+var imported_collision_root: Node3D = null
 
-func _unhandled_input(event):
+func _ready() -> void:
+	# Create imports directory (recursive, absolute).
+	var err: Error = DirAccess.make_dir_recursive_absolute(imports_path)
+	if err != OK:
+		push_error("Could not create imports directory: %s (err %d)" % [imports_path, err])
+
+func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("import"):
 		_show_import_menu()
 
-func _show_import_menu():
-	var popup_menu = PopupMenu.new()
+func _show_import_menu() -> void:
+	var popup_menu: PopupMenu = PopupMenu.new()
 	add_child(popup_menu)
-	popup_menu.connect("popup_hide", popup_menu, "queue_free")
-	
-	# Scan directory
-	var dir = Directory.new()
-	if dir.open(imports_path) != OK:
-		push_error("Could not open imports directory: " + imports_path)
+
+	# Auto-free when closed.
+	popup_menu.popup_hide.connect(func() -> void:
+		popup_menu.queue_free()
+	)
+
+	# Scan directory for .gltf/.glb
+	var dir: DirAccess = DirAccess.open(imports_path)
+	if dir == null:
+		push_error("Could not open imports directory: %s" % imports_path)
 		popup_menu.queue_free()
 		return
-	
-	var filenames = []
-	if dir.list_dir_begin(true, true) == OK:  # Skip . and .., skip hidden
-		while true:
-			var file = dir.get_next()
-			if file == "":
-				break
-			if file.get_extension().to_lower() in ["gltf", "glb"]:
+
+	dir.include_hidden = false
+	dir.include_navigational = false
+	dir.list_dir_begin()
+	var filenames: Array[String] = []
+	while true:
+		var file: String = dir.get_next()
+		if file == "":
+			break
+		if not dir.current_is_dir():
+			var ext: String = file.get_extension().to_lower()
+			if ext == "gltf" or ext == "glb":
 				filenames.append(file)
-		dir.list_dir_end()
-	
-	if filenames.size() == 0:
+	dir.list_dir_end()
+
+	if filenames.is_empty():
 		print("No GLTF files found in imports folder")
 		popup_menu.queue_free()
 		return
-	
+
 	for filename in filenames:
 		popup_menu.add_item(filename)
-	
-	popup_menu.connect("id_pressed", self, "_on_file_selected", [filenames])
+
+	# When user picks an item, load that file.
+	popup_menu.id_pressed.connect(func(id: int) -> void:
+		_on_file_selected(id, filenames)
+	)
+
 	popup_menu.popup_centered()
 
-func _on_file_selected(id, filenames):
+func _on_file_selected(id: int, filenames: Array[String]) -> void:
 	if id < 0 or id >= filenames.size():
 		return
-	
-	var selected_file = filenames[id]
-	# Use Godot 3.x compatible path concatenation
-	var path = imports_path
-	if not path.ends_with("/"):
-		path += "/"
-	path += selected_file
-	
-	var scene = load_gltf(path)
-	if scene:
-		process_gltf_scene(scene)
 
-# Universal GLTF loader for Godot 3
-func load_gltf(path):
-	# First try standard loader (works in editor)
-	var scene_resource = load(path)
-	if scene_resource and scene_resource is PackedScene:
-		return scene_resource.instance()
-	
-	# Then try GLTFDocument method
+	var selected_file: String = filenames[id]
+	var path: String = imports_path.path_join(selected_file)
+
+	var scene_node: Node = load_gltf(path)
+	if scene_node:
+		process_gltf_scene(scene_node)
+
+# --- Runtime GLTF loading (user:// friendly) ---
+
+func load_gltf(path: String) -> Node:
 	if ClassDB.class_exists("GLTFDocument") and ClassDB.class_exists("GLTFState"):
-		var gltf = ClassDB.instance("GLTFDocument")
-		var state = ClassDB.instance("GLTFState")
-		
-		if gltf.has_method("append_from_file") and state:
-			if gltf.append_from_file(path, state) == OK:
-				return gltf.generate_scene(state)
-	
-	# Finally try PackedSceneGLTF as fallback
-	if ClassDB.class_exists("PackedSceneGLTF"):
-		var gltf_loader = ClassDB.instance("PackedSceneGLTF")
-		if gltf_loader.has_method("import_gltf_scene"):
-			return gltf_loader.import_gltf_scene(path, 0, 1000, 0)
-	
-	push_error("Failed to load GLTF: " + path)
+		var gltf: GLTFDocument = GLTFDocument.new()
+		var state: GLTFState = GLTFState.new()
+		var err: Error = gltf.append_from_file(path, state)  # imports .gltf/.glb at runtime
+		if err == OK:
+			return gltf.generate_scene(state)  # returns a scene root Node/Node3D
+	# If we get here, loading failed.
+	push_error("Failed to load GLTF: %s" % path)
 	return null
 
 # --- Collision generation + teleport if inside ---
 
-func process_gltf_scene(scene):
-	# Add the visual scene immediately
+func process_gltf_scene(scene: Node) -> void:
+	# 1) Clear previous import (visuals + colliders), if any
+	_clear_previous_import()
+
+	# 2) Add the new visual scene
 	add_child(scene)
+	imported_visual_root = scene
 
-	# Compute world-space AABB of the imported visuals
-	var aabb = _get_world_aabb(scene)
+	# 3) Compute world-space AABB of the imported visuals
+	var aabb_v: Variant = _get_world_aabb(scene)
 
-	# If the aircraft exists and is inside the imported structure, move it on top
-	if aabb and aircraft and aircraft is Spatial:
-		var p = aircraft.global_transform.origin
+	# 4) If the aircraft exists and is inside the imported structure, move it on top
+	if aircraft and aabb_v is AABB:
+		var aabb: AABB = aabb_v
+		var p: Vector3 = aircraft.global_transform.origin
 		if aabb.has_point(p):
 			p.y = aabb.position.y + aabb.size.y + teleport_clearance
-			var t = aircraft.global_transform
+			var t: Transform3D = aircraft.global_transform
 			t.origin = p
 			aircraft.global_transform = t
-			aircraft.spawn = t
-			# Optional: if aircraft is a RigidBody, you may also want to clear its velocity:
-			# if aircraft is RigidBody:
-			#     aircraft.linear_velocity = Vector3()
-			#     aircraft.angular_velocity = Vector3()
+			# Keep spawn in sync with Drone.gd (Godot 4 port uses `spawn_transform`)
+			if aircraft.has_method("get_property_list"):
+				for prop in aircraft.get_property_list():
+					if typeof(prop) == TYPE_DICTIONARY and prop.get("name", "") == "spawn_transform":
+						aircraft.set("spawn_transform", t)
+						break
 
-	# Create accurate, per-mesh static colliders beside the visual scene
-	var col_root = Node.new()
-	col_root.name = scene.name + "_colliders"
+	# 5) Create accurate, per-mesh static colliders beside the visual scene
+	var col_root: Node3D = Node3D.new()
+	col_root.name = "%s_colliders" % scene.name
 	add_child(col_root)
+	imported_collision_root = col_root
 	_add_trimesh_collision_recursive(scene, col_root)
 
-# Build concave collisions for each MeshInstance (static geometry)
-func _add_trimesh_collision_recursive(root, into_parent):
+func _clear_previous_import() -> void:
+	# Delete previous colliders first (cheap to rebuild, and avoids lingering physics)
+	if imported_collision_root and is_instance_valid(imported_collision_root):
+		imported_collision_root.queue_free()
+		imported_collision_root = null
+	# Then delete the previous visual scene
+	if imported_visual_root and is_instance_valid(imported_visual_root):
+		imported_visual_root.queue_free()
+		imported_visual_root = null
+
+# Build concave collisions for each MeshInstance3D (static geometry)
+func _add_trimesh_collision_recursive(root: Node, into_parent: Node3D) -> void:
 	for child in root.get_children():
-		if child is MeshInstance:
-			_create_static_trimesh_body(child, into_parent)
-		if child is Spatial:
+		if child is MeshInstance3D:
+			_create_static_trimesh_body(child as MeshInstance3D, into_parent)
+		if child is Node3D:
 			_add_trimesh_collision_recursive(child, into_parent)
 
-func _create_static_trimesh_body(mi: MeshInstance, into_parent: Node):
+func _create_static_trimesh_body(mi: MeshInstance3D, into_parent: Node3D) -> void:
 	if mi.mesh == null:
 		return
-	
-	var sb = StaticBody.new()
-	sb.name = mi.name + "_StaticBody"
-	sb.transform = mi.global_transform
 
-	var cs = CollisionShape.new()
-	cs.shape = mi.mesh.create_trimesh_shape()  # ConcavePolygonShape (static only)
+	var sb: StaticBody3D = StaticBody3D.new()
+	sb.name = "%s_StaticBody" % mi.name
+	into_parent.add_child(sb)
+	# Preserve world transform after parenting
+	sb.global_transform = mi.global_transform
+
+	var cs: CollisionShape3D = CollisionShape3D.new()
+	cs.shape = mi.mesh.create_trimesh_shape()  # ConcavePolygonShape3D (static only)
 	sb.add_child(cs)
 
-	into_parent.add_child(sb)
+	# If needed:
 	# sb.collision_layer = 1
 	# sb.collision_mask  = 1
 
-# Compute merged world-space AABB of all MeshInstances under root
-func _get_world_aabb(root):
-	var first = true
-	var merged = AABB()
-	var stack = [root]
-	while stack.size() > 0:
-		var n = stack.pop_back()
-		if n is MeshInstance:
-			var local_aabb = n.get_aabb()
-			var world_aabb = n.global_transform.xform(local_aabb)
+# Compute merged world-space AABB of all MeshInstance3Ds under root
+func _get_world_aabb(root: Node) -> Variant:
+	var first: bool = true
+	var merged: AABB = AABB()
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D:
+			var local_aabb: AABB = (n as MeshInstance3D).get_aabb()
+			var world_aabb: AABB = (n as MeshInstance3D).global_transform * local_aabb
 			if first:
 				merged = world_aabb
 				first = false
 			else:
 				merged = merged.merge(world_aabb)
-		if n is Spatial:
+		if n is Node3D:
 			for c in n.get_children():
 				stack.append(c)
-	# Return null if no meshes found
 	return merged if not first else null

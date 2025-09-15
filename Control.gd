@@ -1,39 +1,40 @@
+# Control.gd (Godot 4.x)
 extends ColorRect
 
-export(NodePath) var aircraft_path
-onready var aircraft = get_node(aircraft_path) if aircraft_path else null
+@export var aircraft_path: NodePath
+@onready var aircraft: Node3D = get_node_or_null(aircraft_path) as Node3D
 
-var center = Vector2.ZERO
-var amplitude = 169
+var center: Vector2 = Vector2.ZERO
+var amplitude: float = 169.0
 
-func _ready():
-	# Connect the 'size_changed' signal of the root viewport to our callback function
-	get_tree().root.connect("size_changed", self, "_on_viewport_resized")
-	var new_size = get_tree().root.size
-	center = Vector2(
-		(new_size.x - rect_size.x)/2,
-		(new_size.y - rect_size.y)/2
-	)
-	rect_position.x = center.x
-	rect_position.y = center.y
-	amplitude = new_size.y / 4
+func _ready() -> void:
+    # Viewport size change signal (4.x)
+    get_viewport().size_changed.connect(_on_viewport_resized)
 
-func _on_viewport_resized():
-	# Get the new size of the viewport (which is the window size)
-	var new_size = get_tree().root.size
-	center = Vector2(
-		(new_size.x - rect_size.x)/2,
-		(new_size.y - rect_size.y)/2
-	)
-	rect_position.x = center.x
-	amplitude = new_size.y / 4
+    var new_size: Vector2i = get_viewport().size
+    center = Vector2(
+        (new_size.x - size.x) / 2.0,
+        (new_size.y - size.y) / 2.0
+    )
+    position = center
+    amplitude = float(new_size.y) / 4.0
 
-func _process(_delta):
-	update()  # Redraw every frame
+func _on_viewport_resized() -> void:
+    var new_size: Vector2i = get_viewport().size
+    center = Vector2(
+        (new_size.x - size.x) / 2.0,
+        (new_size.y - size.y) / 2.0
+    )
+    position.x = center.x
+    amplitude = float(new_size.y) / 4.0
 
-func _draw():
-	if !aircraft:
-		return
+func _process(_delta: float) -> void:
+    queue_redraw()  # 4.x name
 
-	rect_rotation = aircraft.rotation_degrees.z
-	rect_position.y = center.y + (amplitude*aircraft.rotation_degrees.x/180)
+func _draw() -> void:
+    if aircraft == null:
+        return
+    # UI roll from aircraft Z, UI vertical offset from aircraft X (degrees).
+    rotation_degrees = aircraft.rotation_degrees.z
+    position.y = center.y + (amplitude * aircraft.rotation_degrees.x / 180.0)
+

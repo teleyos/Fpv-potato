@@ -1,29 +1,28 @@
 extends RichTextLabel
 
-export(NodePath) var cam_path
-onready var cam = get_node(cam_path) if cam_path else null
+@export_node_path("Node3D") var cam_path: NodePath
+@onready var cam: Node3D = get_node_or_null(cam_path) as Node3D
 
-func _ready():
-	# Get the new size of the viewport (which is the window size)
-	var new_size = get_tree().root.size
-	rect_position = Vector2(
-		(new_size.x - rect_size.x)/2,
-		(new_size.y - rect_size.y)*0.95
-	)
-	# Connect the 'size_changed' signal of the root viewport to our callback function
-	get_tree().root.connect("size_changed", self, "_on_viewport_resized")
+func _ready() -> void:
+	_reposition()
+	var win := get_window()
+	if win:
+		win.size_changed.connect(_on_window_resized)
 
-func _on_viewport_resized():
-	# Get the new size of the viewport (which is the window size)
-	var new_size = get_tree().root.size
-	rect_position = Vector2(
-		(new_size.x - rect_size.x)/2,
-		(new_size.y - rect_size.y)*0.95
-	)
-	# Add your resize handling code here
-	
-func _process(delta):
-	if !cam:
+func _on_window_resized() -> void:
+	_reposition()
+
+func _reposition() -> void:
+	var win := get_window()
+	if win == null:
 		return
-	text = "%d°"%[cam.rotation_degrees.x]
-	pass
+	var ws: Vector2 = Vector2(win.size)
+	position = Vector2(
+		(ws.x - size.x) * 0.5,
+		(ws.y - size.y) * 0.95
+	)
+
+func _process(_delta: float) -> void:
+	if cam == null:
+		return
+	text = "%d°" % [int(round(cam.rotation_degrees.x))]
